@@ -10,12 +10,13 @@
 (require 'citar)
 (require 'citar-format)
 
-(defvar citar-no-cache-max-entries 256)
+(defvar citar-no-cache-max-entries 128)
 (defvar citar-no-cache--completions nil)
 (defvar citar-no-cache--last-query nil)
 
 (defun citar-no-cache-matching-entries (buffer query)
-  "Return approxinately `citar-no-cache-max-entries' from BUFFER containing QUERY."
+  "Return approxinately `citar-no-cache-max-entries' from BUFFER containing QUERY.
+Only pass a temporary buffer to this function."
   (let ((numcandidates 0)
         (start 0)
         (continue t))
@@ -32,11 +33,11 @@
                                               (progn (forward-char) nil))
                                           (re-search-backward parsebib--entry-start nil 'move)))
                      (cl-incf numcandidates)
-                     (buffer-substring start
-                                       (if (progn (forward-char)
-                                                  (re-search-forward parsebib--entry-start nil 'move))
-                                           (- (point) 2)
-                                         (point))))
+                     (delete-and-extract-region start
+                                                (if (progn (forward-char)
+                                                           (re-search-forward parsebib--entry-start nil 'move))
+                                                    (- (point) 2)
+                                                  (point))))
                  (when (eobp) (setq continue nil))))
              "")))
       (car (parsebib-parse-bib-buffer :fields (citar--fields-to-parse) :expand-strings t :inheritance t :replace-TeX t)))))
@@ -49,8 +50,6 @@ strings and values being citation keys.
 
 Return nil if `citar-bibliographies' returns nil."
   (when (not (string= query citar-no-cache--last-query))
-    (setq citar-no-cache--completions
-          (make-hash-table :test #'equal :size (+ citar-no-cache-max-entries 64)))
     (setq citar-no-cache--last-query query)
     (let* ((citar--entries (citar-no-cache-matching-entries buffer query))
            (format (citar-format--parse (citar--get-template 'completion)))
@@ -96,7 +95,11 @@ Return nil if `citar-bibliographies' returns nil."
                         (or (null predicate) (funcall predicate string)))))))
           (complete-with-action action
                                 (citar-no-cache--format-candidates
-                                 (or (car (split-string (minibuffer-contents))) "")
+                                 (or (car (split-string
+                                           (if (minibufferp)
+                                               (minibuffer-contents)
+                                             string)))
+                                     "")
                                  buffer)
                                 string predicate))))))
 
@@ -105,6 +108,8 @@ Return nil if `citar-bibliographies' returns nil."
   (let ((bibs (or (citar--bibliography-files)
                   (user-error "No bibliography set")))
         (buffer (generate-new-buffer " *citar-bibliography*" t)))
+    (setq citar-no-cache--completions
+          (make-hash-table :test #'equal :size (+ citar-no-cache-max-entries 64)))
     (unwind-protect
         (progn (with-current-buffer buffer
                  (dolist (bib bibs)
