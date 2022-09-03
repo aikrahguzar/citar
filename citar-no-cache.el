@@ -15,31 +15,31 @@
 (defvar citar-no-cache--last-query nil)
 
 (defun citar-no-cache-matching-entries (buffer query)
-  "Return approxinately `citar-no-cache-max-entries' from BUFFER matching QUERY."
-  (let ((entries)
-        (numcandidates 0)
+  "Return approxinately `citar-no-cache-max-entries' from BUFFER containing QUERY."
+  (let ((numcandidates 0)
         (start 0)
-        (end))
+        (continue t))
     (with-current-buffer buffer
-      (goto-char (point-min))
-      (setq start (re-search-forward parsebib--entry-start nil 'move)))
+      (goto-char (point-min)))
     (with-temp-buffer
-      (while (and (< numcandidates citar-no-cache-max-entries) start)
-        (with-current-buffer buffer
-          (dotimes (_ 64)
-            (when start
-              (setq end (re-search-forward parsebib--entry-start nil 'move))
-              (push (buffer-substring (1- start)
-                                      (if end (- end 2) (point)))
-                    entries))
-            (setq start end))
-          (cl-callf2 completion-all-completions query entries nil nil)
-          (setf (nthcdr (safe-length entries) entries) nil))
-        (dolist (entry entries)
-          (insert (substring-no-properties entry) "\n")
-          (cl-incf numcandidates))
-        (setq entries nil))
-      (car (parsebib-parse-bib-buffer :fields (citar--fields-to-parse) :replace-TeX t)))))
+      (while (and (< numcandidates citar-no-cache-max-entries) continue)
+        (insert
+         (or (with-current-buffer buffer
+               (prog1
+                   (when (setq start (and (search-forward query nil 'move)
+                                          (or (search-backward "=" (line-beginning-position) t)
+                                              (search-backward "{" (line-beginning-position) t)
+                                              (progn (forward-char) nil))
+                                          (re-search-backward parsebib--entry-start nil 'move)))
+                     (cl-incf numcandidates)
+                     (buffer-substring start
+                                       (if (progn (forward-char)
+                                                  (re-search-forward parsebib--entry-start nil 'move))
+                                           (- (point) 2)
+                                         (point))))
+                 (when (eobp) (setq continue nil))))
+             "")))
+      (car (parsebib-parse-bib-buffer :fields (citar--fields-to-parse) :expand-strings t :inheritance t :replace-TeX t)))))
 
 (defun citar-no-cache--format-candidates (query buffer)
   "Format completion candidates from BUFFER matching QUERY.
@@ -95,20 +95,18 @@ Return nil if `citar-bibliographies' returns nil."
                    (and (or (null filter) (funcall filter key))
                         (or (null predicate) (funcall predicate string)))))))
           (complete-with-action action
-                                (citar-no-cache--format-candidates (minibuffer-contents) buffer)
+                                (citar-no-cache--format-candidates
+                                 (or (car (split-string (minibuffer-contents))) "")
+                                 buffer)
                                 string predicate))))))
 
 (cl-defun citar-no-cache-select-ref ()
   "Select a bibliographic reference."
   (let ((bibs (or (citar--bibliography-files)
                   (user-error "No bibliography set")))
-        (buffer (generate-new-buffer " *citar-bibliography*" t))
-        (syntax-table (make-char-table 'syntax-table)))
-    (modify-syntax-entry ?{ "(}" syntax-table)
-    (modify-syntax-entry ?} "){" syntax-table)
+        (buffer (generate-new-buffer " *citar-bibliography*" t)))
     (unwind-protect
         (progn (with-current-buffer buffer
-                 (set-syntax-table syntax-table)
                  (dolist (bib bibs)
                    (insert-file-contents-literally bib)))
                (let ((chosen (completing-read "Reference: " (citar-no-cache-completion-table buffer)
